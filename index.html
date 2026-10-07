@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Annual Dinner Trivia Game</title>
-<!-- QR Code Library & MQTT WebSocket Library -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- MQTT WebSocket Library -->
 <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+<!-- SheetJS for Excel (.xlsx/.xls) and CSV parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 * {
     box-sizing: border-box;
@@ -94,12 +95,18 @@ h1, h2, h3 {
     border-radius: 10px;
     font-weight: 700;
 }
+.secondary:hover {
+    background: #ded7f3;
+}
 .danger {
     background: #e21b3c;
     color: white;
     padding: 12px 20px;
     border-radius: 10px;
     font-weight: 700;
+}
+.danger:hover {
+    background: #b5132d;
 }
 input[type="text"], input[type="number"], select {
     width: 100%;
@@ -118,13 +125,14 @@ input:focus, select:focus {
    ========================================================= */
 .studio-grid {
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: 340px 1fr;
     gap: 20px;
 }
 .question-list {
-    max-height: 580px;
+    max-height: 520px;
     overflow-y: auto;
     padding-right: 6px;
+    margin-top: 10px;
 }
 .question-item {
     padding: 12px 16px;
@@ -134,9 +142,24 @@ input:focus, select:focus {
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 2px solid transparent;
 }
 .question-item.active {
     background: #46178f;
+    color: white;
+    border-color: #ffd900;
+}
+.q-time-tag {
+    font-size: 11px;
+    background: rgba(0,0,0,0.08);
+    padding: 3px 8px;
+    border-radius: 10px;
+}
+.question-item.active .q-time-tag {
+    background: rgba(255,255,255,0.25);
     color: white;
 }
 .answer-grid {
@@ -150,6 +173,13 @@ input:focus, select:focus {
     border-radius: 10px;
     background: #faf9fd;
     border: 1px solid #e7e2f3;
+}
+.btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
 }
 
 /* =========================================================
@@ -173,13 +203,15 @@ input:focus, select:focus {
     border-radius: 12px;
     margin: 15px auto;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    min-height: 250px;
+    min-width: 250px;
 }
-#qr-code {
-    width: 250px;
-    height: 250px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+#qr-image {
+    width: 240px;
+    height: 240px;
+    display: block;
+    margin: auto;
+    border-radius: 8px;
 }
 .game-pin {
     font-size: 52px;
@@ -196,16 +228,6 @@ input:focus, select:focus {
     font-size: 12px;
     margin-top: 12px;
     color: #5d5475;
-}
-.lobby-warning {
-    padding: 12px;
-    background: #fff8d8;
-    color: #795b00;
-    border-radius: 10px;
-    margin-top: 15px;
-    font-size: 13px;
-    line-height: 1.4;
-    text-align: left;
 }
 .players-header {
     display: flex;
@@ -248,10 +270,11 @@ input:focus, select:focus {
 }
 
 /* =========================================================
-   GAME VIEW (HOST BIG SCREEN)
+   GAME VIEW (HOST SCREEN)
    ========================================================= */
 .game-screen {
     text-align: center;
+    position: relative;
 }
 .game-status-bar {
     display: flex;
@@ -261,6 +284,30 @@ input:focus, select:focus {
     color: #70678d;
     font-size: 18px;
     margin-bottom: 20px;
+}
+.timer-pill {
+    background: #ffd900;
+    color: #292343;
+    padding: 6px 20px;
+    border-radius: 24px;
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 100px;
+    justify-content: center;
+    box-shadow: 0 4px 10px rgba(255, 217, 0, 0.4);
+}
+.timer-pill.urgent {
+    background: #e21b3c;
+    color: white;
+    animation: pulseBlink 0.6s infinite alternate;
+}
+@keyframes pulseBlink {
+    from { transform: scale(1); }
+    to { transform: scale(1.08); }
 }
 .game-question {
     font-size: 36px;
@@ -287,6 +334,14 @@ input:focus, select:focus {
     align-items: center;
     gap: 14px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transition: opacity 0.3s, transform 0.2s;
+}
+.game-answer.faded {
+    opacity: 0.25;
+}
+.game-answer.revealed-correct {
+    box-shadow: 0 0 0 5px #ffd900, 0 8px 24px rgba(0,0,0,0.25);
+    transform: scale(1.02);
 }
 .shape-icon {
     font-size: 26px;
@@ -297,8 +352,112 @@ input:focus, select:focus {
 .bg-green { background: #26890c; }
 
 /* =========================================================
-   RESULTS VIEW
+   RESULTS VIEW & WINNER'S PODIUM
    ========================================================= */
+.podium-container {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 20px;
+    height: 380px;
+    margin: 40px auto;
+    max-width: 800px;
+}
+.podium-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 180px;
+    opacity: 0;
+    transform: translateY(100px);
+}
+.podium-col.reveal-active {
+    opacity: 1;
+    transform: translateY(0);
+    transition: transform 1s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.8s ease;
+}
+.podium-avatar {
+    width: 65px;
+    height: 65px;
+    border-radius: 50%;
+    background: #46178f;
+    color: white;
+    font-size: 24px;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    margin-bottom: 10px;
+    border: 3px solid white;
+}
+.podium-col.first-place .podium-avatar {
+    width: 85px;
+    height: 85px;
+    font-size: 32px;
+    border-color: #ffd900;
+}
+.podium-name {
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 4px;
+    color: #292343;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 170px;
+}
+.podium-score {
+    font-size: 15px;
+    font-weight: 700;
+    color: #70678d;
+    margin-bottom: 12px;
+}
+.podium-block {
+    width: 100%;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+    font-weight: 900;
+    color: rgba(255,255,255,0.9);
+    position: relative;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+.first-place .podium-block {
+    height: 200px;
+    background: linear-gradient(135deg, #ffca00, #d89e00);
+    border: 3px solid #ffd900;
+    border-bottom: 0;
+}
+.second-place .podium-block {
+    height: 150px;
+    background: linear-gradient(135deg, #bdc3c7, #95a5a6);
+}
+.third-place .podium-block {
+    height: 110px;
+    background: linear-gradient(135deg, #e67e22, #d35400);
+}
+.crown-icon {
+    font-size: 32px;
+    position: absolute;
+    top: -34px;
+    left: 50%;
+    transform: translateX(-50%);
+    animation: floating 1.2s ease-in-out infinite alternate;
+}
+@keyframes floating {
+    0% { transform: translate(-50%, 0); }
+    100% { transform: translate(-50%, -6px); }
+}
+.secondary-leaderboard {
+    max-width: 750px;
+    margin: 40px auto 20px auto;
+    border-top: 2px dashed #ddd8ec;
+    padding-top: 30px;
+}
 .results-list {
     max-width: 750px;
     margin: 20px auto;
@@ -313,14 +472,66 @@ input:focus, select:focus {
     border-radius: 12px;
     box-shadow: 0 3px 10px rgba(0,0,0,0.05);
 }
-.result-row:nth-child(1) {
-    background: #fff8db;
-    border: 2px solid #ffd900;
-}
 .rank {
     font-size: 24px;
     font-weight: 900;
     width: 50px;
+}
+
+/* =========================================================
+   LIVE SCOREBOARD STYLING
+   ========================================================= */
+.live-leaderboard {
+    position: absolute;
+    top: 80px;
+    right: 24px;
+    width: 320px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    z-index: 100;
+    opacity: 0;
+    transform: translateX(50px);
+    transition: all 0.5s ease-out;
+    border: 2px solid #e5dcf4;
+}
+.live-leaderboard.visible {
+    opacity: 1;
+    transform: translateX(0);
+}
+.live-leaderboard h3 {
+    margin-top: 0;
+    text-align: center;
+    color: #46178f;
+    font-size: 20px;
+    font-weight: 800;
+    border-bottom: 2px solid #eeeafa;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+.live-score-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 4px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #292343;
+    border-bottom: 1px solid #f5f3fa;
+}
+.live-score-row:last-child {
+    border-bottom: none;
+}
+.live-score-row .name {
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 180px;
+}
+.live-score-row .score {
+    color: #46178f;
+    font-weight: 800;
 }
 
 /* =========================================================
@@ -329,51 +540,94 @@ input:focus, select:focus {
 #player-view {
     min-height: 100vh;
     background: #46178f;
-    padding: 16px;
+    padding: 14px;
     display: flex;
     flex-direction: column;
     justify-content: center;
 }
 .player-container {
-    max-width: 440px;
+    max-width: 480px;
     width: 100%;
     margin: auto;
     background: white;
     border-radius: 20px;
-    padding: 24px;
+    padding: 20px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.25);
 }
 .player-logo {
     text-align: center;
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 900;
     color: #46178f;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
+}
+.phone-timer-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.phone-timer-badge {
+    background: #ffd900;
+    color: #292343;
+    padding: 4px 14px;
+    border-radius: 16px;
+    font-size: 18px;
+    font-weight: 900;
+}
+.phone-question-card {
+    background: #f6f3fb;
+    border: 2px solid #e5dcf4;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    font-size: 17px;
+    font-weight: 800;
+    color: #2b2046;
+    line-height: 1.35;
+    text-align: left;
 }
 .phone-answer-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    height: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 .phone-btn {
     width: 100%;
-    height: 100%;
-    border-radius: 14px;
+    min-height: 64px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 44px;
+    padding: 10px 16px;
+    font-size: 17px;
+    font-weight: 800;
     color: white;
-    box-shadow: 0 6px 14px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    text-align: left;
+    gap: 12px;
+}
+.phone-btn span.p-shape {
+    font-size: 24px;
+    min-width: 28px;
+    text-align: center;
+}
+.phone-btn span.p-text {
+    flex: 1;
+    word-break: break-word;
 }
 .phone-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
 }
 .player-status-card {
     text-align: center;
     padding: 30px 10px;
+}
+.net-status {
+    font-size: 12px;
+    text-align: center;
+    margin-top: 10px;
+    color: #888;
 }
 
 @media (max-width: 768px) {
@@ -386,6 +640,30 @@ input:focus, select:focus {
     .game-question {
         font-size: 24px;
     }
+    .podium-container {
+        gap: 10px;
+        height: 320px;
+    }
+    .podium-col {
+        width: 105px;
+    }
+    .podium-block {
+        font-size: 32px;
+    }
+    .podium-avatar {
+        width: 50px;
+        height: 50px;
+        font-size: 18px;
+    }
+    .podium-col.first-place .podium-avatar {
+        width: 65px;
+        height: 65px;
+        font-size: 24px;
+    }
+    .podium-name {
+        font-size: 13px;
+        max-width: 100px;
+    }
 }
 </style>
 </head>
@@ -396,60 +674,90 @@ input:focus, select:focus {
      ========================================================= -->
 <div id="host-app">
     <div class="topbar">
-        <div class="logo">ANNUAL DINNER <span>GAME</span></div>
-        <div class="status-pill" id="host-connection-status">● Connecting to Game Network...</div>
+        <div class="logo">ANNUAL DINNER <span>QUIZ</span></div>
+        <div class="status-pill" id="host-connection-status">● Connecting...</div>
     </div>
 
     <!-- STUDIO -->
     <section id="studio-view" class="main">
-        <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
             <div>
                 <h1>Quiz Studio</h1>
-                <p style="margin:0; color:#666;">Set up questions or keep the Malaysian dinner trivia defaults, then open the lobby.</p>
+                <p style="margin:0; color:#666;">Create questions manually, or import from an Excel/CSV file.</p>
             </div>
-            <button class="primary" onclick="openLobby()" style="font-size:18px;">Open Lobby for Guests ➔</button>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <!-- Hidden File Input for Import -->
+                <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv,.json" style="display:none;" onchange="handleFileImport(event)">
+                <button class="secondary" onclick="document.getElementById('import-file-input').click()">📥 Import File</button>
+                <button class="secondary" onclick="downloadSampleTemplate()">📄 Sample Template</button>
+                <button class="primary" onclick="openLobby()" style="font-size:18px;">Open Lobby for Guests ➔</button>
+            </div>
         </div>
 
         <div class="studio-grid">
             <div class="card">
-                <h3>Questions (<span id="total-q-count">0</span>)</h3>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3>Questions (<span id="total-q-count">0</span>)</h3>
+                    <button class="secondary" onclick="addNewQuestion()" style="padding: 6px 12px; font-size: 13px;">+ New Question</button>
+                </div>
                 <div id="question-list" class="question-list"></div>
             </div>
+
             <div class="card">
-                <h2 id="question-title">Edit Question</h2>
-                <label>Question Text</label>
-                <input type="text" id="question-text" placeholder="Enter question">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2 id="question-title">Edit Question</h2>
+                    <button class="danger" onclick="deleteCurrentQuestion()" style="padding: 6px 12px; font-size: 13px;">Delete Question</button>
+                </div>
+                
+                <label><strong>Question Title</strong></label>
+                <input type="text" id="question-text" placeholder="Enter question..." style="margin-top:6px;">
                 
                 <div class="answer-grid">
                     <div class="answer-input-box">
                         <strong>🔴 Answer A</strong>
-                        <input type="text" id="answer-0">
+                        <input type="text" id="answer-0" style="margin-top:6px;">
                     </div>
                     <div class="answer-input-box">
                         <strong>🔵 Answer B</strong>
-                        <input type="text" id="answer-1">
+                        <input type="text" id="answer-1" style="margin-top:6px;">
                     </div>
                     <div class="answer-input-box">
                         <strong>🟡 Answer C</strong>
-                        <input type="text" id="answer-2">
+                        <input type="text" id="answer-2" style="margin-top:6px;">
                     </div>
                     <div class="answer-input-box">
                         <strong>🟢 Answer D</strong>
-                        <input type="text" id="answer-3">
+                        <input type="text" id="answer-3" style="margin-top:6px;">
                     </div>
                 </div>
 
-                <div style="margin-top:15px;">
-                    <label><strong>Correct Answer:</strong></label>
-                    <select id="correct-answer" style="margin-top:5px;">
-                        <option value="0">🔴 Answer A</option>
-                        <option value="1">🔵 Answer B</option>
-                        <option value="2">🟡 Answer C</option>
-                        <option value="3">🟢 Answer D</option>
-                    </select>
+                <div style="margin-top:16px; display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+                    <div>
+                        <label><strong>Correct Answer:</strong></label>
+                        <select id="correct-answer" style="margin-top:6px;">
+                            <option value="0">🔴 Answer A</option>
+                            <option value="1">🔵 Answer B</option>
+                            <option value="2">🟡 Answer C</option>
+                            <option value="3">🟢 Answer D</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label><strong>Question Timer:</strong></label>
+                        <select id="question-timer" style="margin-top:6px;">
+                            <option value="10">10 Seconds (Speed Round)</option>
+                            <option value="15">15 Seconds</option>
+                            <option value="20" selected>20 Seconds (Standard)</option>
+                            <option value="30">30 Seconds</option>
+                            <option value="45">45 Seconds</option>
+                            <option value="60">60 Seconds</option>
+                        </select>
+                    </div>
                 </div>
-                <br>
-                <button class="secondary" onclick="saveCurrentQuestion()">Save Question Changes</button>
+
+                <div class="btn-group">
+                    <button class="primary" onclick="saveCurrentQuestion()">Save Question Changes</button>
+                    <button class="secondary" onclick="addNewQuestion()">+ Add Another Question</button>
+                </div>
             </div>
         </div>
     </section>
@@ -462,20 +770,17 @@ input:focus, select:focus {
                 <div>GAME PIN</div>
                 <div class="game-pin" id="game-pin">----</div>
                 <div class="qr-wrapper">
-                    <div id="qr-code"></div>
+                    <img id="qr-image" src="" alt="Scan QR Code to Join">
                 </div>
                 <strong>Scan with phone camera to join</strong>
                 <div class="join-url-box" id="join-url"></div>
-                <div class="lobby-warning" id="local-warning-box">
-                    💡 <strong>Pro-Tip:</strong> If you are testing this from <code>file:///</code>, phones on cellular data cannot open local computer paths. For the live dinner, drop this HTML file into Netlify Drop or GitHub Pages!
-                </div>
             </div>
 
             <div class="card">
                 <div class="players-header">
                     <div>
                         <h2>Connected Guests</h2>
-                        <div style="color:#666;">Waiting for guests to scan and enter names...</div>
+                        <div style="color:#666;">Waiting for guests to join...</div>
                     </div>
                     <div class="player-count" id="player-count">0</div>
                 </div>
@@ -495,45 +800,84 @@ input:focus, select:focus {
     <section id="game-view" class="main hidden">
         <div class="card game-screen">
             <div class="game-status-bar">
-                <span id="game-progress">Question 1 / 20</span>
+                <span id="game-progress">Question 1</span>
+                <div id="game-timer" class="timer-pill">20s</div>
                 <span id="game-answered-stat">0 Answers Received</span>
             </div>
             
             <div id="game-question" class="game-question"></div>
-
             <div class="game-answer-grid">
-                <div class="game-answer bg-red">
+                <div class="game-answer bg-red" id="box-ans-0">
                     <span class="shape-icon">▲</span>
                     <span id="game-answer-0"></span>
                 </div>
-                <div class="game-answer bg-blue">
+                <div class="game-answer bg-blue" id="box-ans-1">
                     <span class="shape-icon">◆</span>
                     <span id="game-answer-1"></span>
                 </div>
-                <div class="game-answer bg-yellow">
+                <div class="game-answer bg-yellow" id="box-ans-2">
                     <span class="shape-icon">●</span>
                     <span id="game-answer-2"></span>
                 </div>
-                <div class="game-answer bg-green">
+                <div class="game-answer bg-green" id="box-ans-3">
                     <span class="shape-icon">■</span>
                     <span id="game-answer-3"></span>
                 </div>
             </div>
-
             <br><br>
             <button class="primary" id="next-q-btn" onclick="nextQuestion()" style="font-size:18px; padding:16px 36px;">
                 NEXT QUESTION ➔
             </button>
         </div>
+        
+        <!-- Live Leaderboard Popup Box (Host Screen Overlay) -->
+        <div id="live-leaderboard" class="live-leaderboard">
+            <h3>Live Scores</h3>
+            <div id="live-board-rows"></div>
+        </div>
     </section>
 
-    <!-- RESULTS -->
+    <!-- RESULTS (FINAL LEADERS & PODIUM) -->
     <section id="results-view" class="main hidden">
-        <div class="card" style="text-align:center;">
+        <div class="card" style="text-align:center; overflow:hidden;">
             <h1>🏆 Leaderboard & Top Winners 🏆</h1>
-            <div id="results-list" class="results-list"></div>
-            <br>
-            <button class="primary" onclick="openLobby()" style="font-size:18px;">Host Another Round</button>
+            
+            <div class="podium-container">
+                <!-- 2ND Place -->
+                <div class="podium-col second-place" id="p-col-2">
+                    <div class="podium-avatar">2</div>
+                    <div class="podium-name" id="p-name-2">---</div>
+                    <div class="podium-score" id="p-score-2">0 pts</div>
+                    <div class="podium-block">2</div>
+                </div>
+                
+                <!-- 1ST Place -->
+                <div class="podium-col first-place" id="p-col-1">
+                    <span class="crown-icon">👑</span>
+                    <div class="podium-avatar">1</div>
+                    <div class="podium-name" id="p-name-1">---</div>
+                    <div class="podium-score" id="p-score-1">0 pts</div>
+                    <div class="podium-block">1</div>
+                </div>
+                
+                <!-- 3RD Place -->
+                <div class="podium-col third-place" id="p-col-3">
+                    <div class="podium-avatar">3</div>
+                    <div class="podium-name" id="p-name-3">---</div>
+                    <div class="podium-score" id="p-score-3">0 pts</div>
+                    <div class="podium-block">3</div>
+                </div>
+            </div>
+
+            <div class="secondary-leaderboard">
+                <h3>Final Standings</h3>
+                <div id="results-list" class="results-list"></div>
+            </div>
+            
+            <div class="btn-group">
+                <button class="primary" onclick="openLobby()" style="font-size:18px;">Host Another Round</button>
+                <button class="secondary" onclick="exportResultsToCSV()" style="font-size:18px;">Export Results (CSV)</button>
+            </div>
         </div>
     </section>
 </div>
@@ -549,28 +893,46 @@ input:focus, select:focus {
         <div id="mobile-join-box">
             <h3 style="text-align:center; margin-bottom:15px;">Join Session</h3>
             <p style="text-align:center; color:#666;">PIN: <strong id="phone-display-pin">----</strong></p>
-            <label>Your Name / Table Number</label>
-            <input type="text" id="mobile-player-name" placeholder="e.g. Alex (Table 3)" maxlength="30" style="margin-top:6px;">
-            <button class="primary" onclick="playerSubmitJoin()" style="width:100%; margin-top:15px; font-size:18px;">
+            <label><strong>WWID</strong></label>
+            <input type="number" id="mobile-player-name" placeholder="Enter WWID (e.g. 12345678)" style="margin-top:6px;" pattern="[0-9]*" inputmode="numeric" value="">
+            <button class="primary" id="btn-join-submit" onclick="playerSubmitJoin()" style="width:100%; margin-top:15px; font-size:18px;">
                 JOIN GAME
             </button>
+            <div id="player-net-status" class="net-status">Connecting to server...</div>
         </div>
 
         <!-- MOBILE WAITING -->
         <div id="mobile-waiting-box" class="hidden player-status-card">
             <div style="font-size:55px;">🎉</div>
             <h2>You're In!</h2>
-            <p>Look at the big screen projector. The host will start shortly!</p>
+            <p>Welcome, <strong id="player-confirm-name"></strong>!</p>
+            <p style="color:#666;">The host will start the quiz shortly. Keep your phone on this screen.</p>
         </div>
 
         <!-- MOBILE PLAYING -->
         <div id="mobile-playing-box" class="hidden">
-            <p style="text-align:center; font-weight:700; margin-bottom:12px; color:#555;">Pick your answer!</p>
+            <div class="phone-timer-bar">
+                <span id="player-question-indicator" style="font-weight:800; color:#46178f;">Question</span>
+                <div class="phone-timer-badge" id="player-timer-badge">20s</div>
+            </div>
+            <div class="phone-question-card" id="phone-question-text">Loading question...</div>
             <div class="phone-answer-grid">
-                <button class="phone-btn bg-red" onclick="playerPickAnswer(0)">▲</button>
-                <button class="phone-btn bg-blue" onclick="playerPickAnswer(1)">◆</button>
-                <button class="phone-btn bg-yellow" onclick="playerPickAnswer(2)">●</button>
-                <button class="phone-btn bg-green" onclick="playerPickAnswer(3)">■</button>
+                <button class="phone-btn bg-red" onclick="playerPickAnswer(0)">
+                    <span class="p-shape">▲</span>
+                    <span class="p-text" id="p-opt-0"></span>
+                </button>
+                <button class="phone-btn bg-blue" onclick="playerPickAnswer(1)">
+                    <span class="p-shape">◆</span>
+                    <span class="p-text" id="p-opt-1"></span>
+                </button>
+                <button class="phone-btn bg-yellow" onclick="playerPickAnswer(2)">
+                    <span class="p-shape">●</span>
+                    <span class="p-text" id="p-opt-2"></span>
+                </button>
+                <button class="phone-btn bg-green" onclick="playerPickAnswer(3)">
+                    <span class="p-shape">■</span>
+                    <span class="p-text" id="p-opt-3"></span>
+                </button>
             </div>
         </div>
 
@@ -578,111 +940,241 @@ input:focus, select:focus {
         <div id="mobile-answered-box" class="hidden player-status-card">
             <div style="font-size:55px;">⏳</div>
             <h2>Answer Recorded!</h2>
-            <p>Waiting for the host to show the next question...</p>
+            <p>Waiting for the timer to end or for the host to proceed...</p>
+        </div>
+
+        <!-- MOBILE TIME UP -->
+        <div id="mobile-timeup-box" class="hidden player-status-card">
+            <div style="font-size:55px;">⏰</div>
+            <h2 style="color:#e21b3c;">Time's Up!</h2>
+            <p>Check the main screen to see the correct answer.</p>
         </div>
     </div>
 </div>
 
 <script>
 /* =========================================================
-   PUBLIC REAL-TIME MESSAGING (MQTT OVER WEBSOCKET)
-   Free public broker with zero backend setup required.
+   CORE GAME LOGIC & NETWORKING
    ========================================================= */
 const MQTT_BROKER = "wss://broker.emqx.io:8084/mqtt";
 let mqttClient = null;
-
 let gameSessionId = "";
 let currentGamePin = "";
 let questions = [];
 let selectedQuestion = 0;
 let currentQuestion = 0;
-let players = {}; // id: { name, score, answered }
+let players = {};
 let isHost = true;
+let isConnected = false;
+
+// Player session (Fresh random ID per session)
 let myPlayerId = "p_" + Math.random().toString(36).substr(2, 9);
 let myPlayerName = "";
 
+// Timer Management
+let hostTimerInterval = null;
+let hostTimeLeft = 20;
+let questionTimeLimit = 20;
+let isQuestionActive = false;
+
+let playerTimerInterval = null;
+let playerTimeLeft = 20;
+
 /* =========================================================
-   DEFAULT QUESTIONS (Malaysian Annual Dinner Theme)
+   DEFAULT QUESTIONS (Malaysian Theme)
    ========================================================= */
 function loadDefaultQuestions() {
     questions = [
         {
             question: "What is the capital city of Malaysia?",
             answers: ["Penang", "Kuala Lumpur", "Putrajaya", "Johor Bahru"],
-            correct: 1
+            correct: 1,
+            timeLimit: 20
         },
         {
             question: "Which iconic tower was once the tallest building in the world?",
             answers: ["Petronas Twin Towers", "The Exchange 106", "KL Tower", "Merdeka 118"],
-            correct: 0
+            correct: 0,
+            timeLimit: 20
         },
         {
             question: "What is Malaysia's national dish often wrapped in banana leaves?",
             answers: ["Roti Canai", "Nasi Lemak", "Laksa", "Char Kway Teow"],
-            correct: 1
+            correct: 1,
+            timeLimit: 15
         },
         {
             question: "Which animal is the national animal of Malaysia?",
             answers: ["Sun Bear", "Orangutan", "Malayan Tiger", "Proboscis Monkey"],
-            correct: 2
-        },
-        {
-            question: "How many states are there in Malaysia?",
-            answers: ["12", "13", "14", "15"],
-            correct: 1
-        },
-        {
-            question: "Which Malaysian state is famous for George Town heritage street art?",
-            answers: ["Melaka", "Penang", "Perak", "Sabah"],
-            correct: 1
-        },
-        {
-            question: "What currency is used in Malaysia?",
-            answers: ["Rupiah", "Dollar", "Ringgit", "Baht"],
-            correct: 2
-        },
-        {
-            question: "Which flower is the national flower of Malaysia?",
-            answers: ["Bunga Raya (Hibiscus)", "Orchid", "Rose", "Rafflesia"],
-            correct: 0
-        },
-        {
-            question: "What is the highest mountain in Malaysia?",
-            answers: ["Mount Tahan", "Mount Kinabalu", "Mount Korbu", "Mount Santubong"],
-            correct: 1
+            correct: 2,
+            timeLimit: 20
         },
         {
             question: "Which of these is commonly known as the 'King of Fruits' in Malaysia?",
             answers: ["Mangosteen", "Rambutan", "Durian", "Jackfruit"],
-            correct: 2
+            correct: 2,
+            timeLimit: 15
         }
     ];
+}
+
+/* =========================================================
+   FILE IMPORT & TEMPLATE EXPORT LOGIC
+   ========================================================= */
+function downloadSampleTemplate() {
+    const csvContent = 
+`Question,Option A,Option B,Option C,Option D,Correct Answer,Time Limit
+What is the capital of Malaysia?,Penang,Kuala Lumpur,Putrajaya,Johor Bahru,B,20
+Which tower was once the tallest?,Petronas Twin Towers,The Exchange 106,KL Tower,Merdeka 118,A,20
+What is Malaysia's national dish?,Roti Canai,Nasi Lemak,Laksa,Char Kway Teow,B,15
+Which animal is national animal?,Sun Bear,Orangutan,Malayan Tiger,Proboscis Monkey,C,20`;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "trivia_questions_template.csv";
+    link.click();
+}
+
+function handleFileImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    const fileName = file.name.toLowerCase();
+
+    if (fileName.endsWith('.json')) {
+        reader.onload = function(evt) {
+            try {
+                const parsed = JSON.parse(evt.target.result);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    questions = parsed;
+                    selectedQuestion = 0;
+                    renderStudioQuestions();
+                    loadQuestionToEditor(0);
+                    alert(`Successfully imported ${questions.length} questions from JSON!`);
+                } else {
+                    alert("Invalid JSON format. Expected an array of questions.");
+                }
+            } catch (err) {
+                alert("Failed to parse JSON file: " + err.message);
+            }
+        };
+        reader.readAsText(file);
+    } else {
+        // Excel (.xlsx, .xls) and CSV parser via SheetJS
+        reader.onload = function(evt) {
+            try {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[firstSheetName];
+                const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+                if (!rows || rows.length === 0) {
+                    alert("The uploaded spreadsheet is empty!");
+                    return;
+                }
+
+                const importedQuestions = [];
+
+                rows.forEach((row, i) => {
+                    // Flexible Header Detection
+                    const qText = row["Question"] || row["question"] || row["Question Text"] || Object.values(row)[0];
+                    const optA = row["Option A"] || row["Answer A"] || row["A"] || row["Option 1"] || row["Answer 1"] || "";
+                    const optB = row["Option B"] || row["Answer B"] || row["B"] || row["Option 2"] || row["Answer 2"] || "";
+                    const optC = row["Option C"] || row["Answer C"] || row["C"] || row["Option 3"] || row["Answer 3"] || "";
+                    const optD = row["Option D"] || row["Answer D"] || row["D"] || row["Option 4"] || row["Answer 4"] || "";
+                    
+                    let correctVal = row["Correct Answer"] || row["Correct"] || row["Answer"] || row["correct"] || 0;
+                    let correctIndex = 0;
+
+                    // Match letters A, B, C, D or numbers 1, 2, 3, 4
+                    if (typeof correctVal === "string") {
+                        const trimmed = correctVal.trim().toUpperCase();
+                        if (trimmed === "A" || trimmed === "1") correctIndex = 0;
+                        else if (trimmed === "B" || trimmed === "2") correctIndex = 1;
+                        else if (trimmed === "C" || trimmed === "3") correctIndex = 2;
+                        else if (trimmed === "D" || trimmed === "4") correctIndex = 3;
+                        else correctIndex = parseInt(trimmed) || 0;
+                    } else if (typeof correctVal === "number") {
+                        if (correctVal >= 1 && correctVal <= 4) correctIndex = correctVal - 1;
+                        else if (correctVal >= 0 && correctVal <= 3) correctIndex = correctVal;
+                    }
+
+                    let timeLimit = parseInt(row["Time Limit"] || row["Timer"] || row["Time"]) || 20;
+
+                    if (qText) {
+                        importedQuestions.push({
+                            question: String(qText).trim(),
+                            answers: [String(optA).trim(), String(optB).trim(), String(optC).trim(), String(optD).trim()],
+                            correct: correctIndex,
+                            timeLimit: timeLimit
+                        });
+                    }
+                });
+
+                if (importedQuestions.length > 0) {
+                    questions = importedQuestions;
+                    selectedQuestion = 0;
+                    renderStudioQuestions();
+                    loadQuestionToEditor(0);
+                    alert(`Successfully imported ${questions.length} questions!`);
+                } else {
+                    alert("Could not recognize question format. Please check the sample template.");
+                }
+            } catch (err) {
+                alert("Error reading spreadsheet: " + err.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+    // Reset file input so user can re-import if needed
+    e.target.value = "";
 }
 
 /* =========================================================
    MQTT REAL-TIME SETUP
    ========================================================= */
 function initRealtimeNetwork(onConnected) {
-    mqttClient = mqtt.connect(MQTT_BROKER, {
-        clientId: (isHost ? "host_" : "player_") + Math.random().toString(16).substr(2, 8),
-        clean: true,
-        reconnectPeriod: 3000
-    });
+    try {
+        mqttClient = mqtt.connect(MQTT_BROKER, {
+            clientId: (isHost ? "host_" : "player_") + Math.random().toString(16).substr(2, 8),
+            clean: true,
+            connectTimeout: 5000,
+            reconnectPeriod: 2500
+        });
 
-    mqttClient.on("connect", () => {
-        document.getElementById("host-connection-status").textContent = "● Live Network Active";
-        document.getElementById("host-connection-status").style.background = "rgba(40, 167, 69, 0.4)";
-        if (onConnected) onConnected();
-    });
+        mqttClient.on("connect", () => {
+            isConnected = true;
+            const statusEl = isHost ? document.getElementById("host-connection-status") : document.getElementById("player-net-status");
+            if (statusEl) {
+                statusEl.textContent = isHost ? "● Live Network Active" : "● Connected to Game Room";
+                statusEl.style.color = isHost ? '' : "#28a745";
+                if(isHost) statusEl.style.background = "rgba(40, 167, 69, 0.4)";
+            }
+            if (onConnected) onConnected();
+        });
 
-    mqttClient.on("message", (topic, payload) => {
-        try {
-            const data = JSON.parse(payload.toString());
-            handleNetworkMessage(topic, data);
-        } catch (e) {
-            console.error("Message parse error:", e);
-        }
-    });
+        mqttClient.on("error", (err) => {
+            console.error("MQTT Connection Error:", err);
+            if (!isHost) {
+                const pStatus = document.getElementById("player-net-status");
+                if (pStatus) pStatus.textContent = "Connection issue. Retrying...";
+            }
+        });
+
+        mqttClient.on("message", (topic, payload) => {
+            try {
+                const data = JSON.parse(payload.toString());
+                handleNetworkMessage(topic, data);
+            } catch (e) {
+                console.error("Message parse error:", e);
+            }
+        });
+    } catch (e) {
+        console.warn("MQTT Network initialization error:", e);
+    }
 }
 
 function sendNetworkMessage(action, payload) {
@@ -704,39 +1196,69 @@ function handleNetworkMessage(topic, data) {
                     answered: -1
                 };
                 renderPlayers();
-                // Send player confirmation
-                sendNetworkMessage("join_accepted", { playerId: data.playerId });
+                sendNetworkMessage("join_accepted", { 
+                    playerId: data.playerId,
+                    playerName: data.name
+                });
             }
         } else if (action === "submit_answer") {
-            if (players[data.playerId] && players[data.playerId].answered === -1) {
+            if (isQuestionActive && players[data.playerId] && players[data.playerId].answered === -1) {
                 players[data.playerId].answered = data.answerIndex;
+                
                 if (data.answerIndex === questions[currentQuestion].correct) {
-                    players[data.playerId].score += 1000;
+                    const speedRatio = Math.max(0, hostTimeLeft) / questionTimeLimit;
+                    const awardedScore = Math.round(500 + (500 * speedRatio));
+                    players[data.playerId].score += awardedScore;
                 }
+                
                 updateAnswerStats();
+
+                const allAnswered = Object.values(players).length > 0 && 
+                                    Object.values(players).every(p => p.answered !== -1);
+                if (allAnswered) {
+                    handleTimeUp();
+                }
             }
         }
     } else {
-        // Player responses
         if (action === "join_accepted" && data.playerId === myPlayerId) {
+            document.getElementById("player-confirm-name").textContent = data.playerName;
             showPlayerSection("mobile-waiting-box");
-        } else if (action === "game_start" || action === "new_question") {
+        } else if (action === "new_question") {
             currentQuestion = data.questionIndex;
+            playerTimeLeft = data.timeLimit || 20;
+
+            document.getElementById("player-question-indicator").textContent = `Question ${data.questionIndex + 1}`;
+            document.getElementById("phone-question-text").textContent = data.questionText;
+            for (let i = 0; i < 4; i++) {
+                const optEl = document.getElementById("p-opt-" + i);
+                if (optEl) optEl.textContent = data.answers[i] || "";
+            }
+
+            startPlayerTimer(playerTimeLeft);
             showPlayerSection("mobile-playing-box");
             enablePhoneButtons(true);
+        } else if (action === "time_up") {
+            stopPlayerTimer();
+            enablePhoneButtons(false);
+            const currentActive = document.querySelector("#player-view .player-container > div:not(.hidden)");
+            if (currentActive && currentActive.id === "mobile-playing-box") {
+                showPlayerSection("mobile-timeup-box");
+            }
         } else if (action === "game_over") {
+            stopPlayerTimer();
             showPlayerSection("mobile-waiting-box");
             document.getElementById("mobile-waiting-box").innerHTML = `
                 <div style="font-size:55px;">🏆</div>
                 <h2>Game Complete!</h2>
-                <p>Check the big screen for the final winner podium!</p>
+                <p>Check the big projector screen for the final winner podium!</p>
             `;
         }
     }
 }
 
 /* =========================================================
-   HOST: STUDIO LOGIC
+   HOST: QUESTION STUDIO & EDITING
    ========================================================= */
 function renderStudioQuestions() {
     const list = document.getElementById("question-list");
@@ -746,7 +1268,10 @@ function renderStudioQuestions() {
     questions.forEach((q, idx) => {
         const item = document.createElement("div");
         item.className = "question-item " + (idx === selectedQuestion ? "active" : "");
-        item.textContent = (idx + 1) + ". " + q.question;
+        item.innerHTML = `
+            <span>${idx + 1}. ${escapeHtml(q.question.substring(0, 22))}${q.question.length > 22 ? '...' : ''}</span>
+            <span class="q-time-tag">${q.timeLimit || 20}s</span>
+        `;
         item.onclick = () => {
             saveCurrentQuestion();
             selectedQuestion = idx;
@@ -758,66 +1283,87 @@ function renderStudioQuestions() {
 }
 
 function loadQuestionToEditor(idx) {
+    if (!questions[idx]) return;
     const q = questions[idx];
     document.getElementById("question-title").textContent = "Edit Question " + (idx + 1);
     document.getElementById("question-text").value = q.question;
     for (let i = 0; i < 4; i++) {
-        document.getElementById("answer-" + i).value = q.answers[i];
+        document.getElementById("answer-" + i).value = q.answers[i] || "";
     }
-    document.getElementById("correct-answer").value = q.correct;
+    document.getElementById("correct-answer").value = q.correct !== undefined ? q.correct : 0;
+    document.getElementById("question-timer").value = q.timeLimit || 20;
 }
 
 function saveCurrentQuestion() {
     if (!questions[selectedQuestion]) return;
-    questions[selectedQuestion].question = document.getElementById("question-text").value.trim();
+    const qText = document.getElementById("question-text").value.trim();
+    questions[selectedQuestion].question = qText || "Untitled Question";
+    
     for (let i = 0; i < 4; i++) {
-        questions[selectedQuestion].answers[i] = document.getElementById("answer-" + i).value.trim();
+        const ans = document.getElementById("answer-" + i).value.trim();
+        questions[selectedQuestion].answers[i] = ans || ("Option " + (i + 1));
     }
     questions[selectedQuestion].correct = parseInt(document.getElementById("correct-answer").value);
+    questions[selectedQuestion].timeLimit = parseInt(document.getElementById("question-timer").value) || 20;
+    renderStudioQuestions();
+}
+
+function addNewQuestion() {
+    saveCurrentQuestion();
+    const newQ = {
+        question: "New Trivia Question",
+        answers: ["Option A", "Option B", "Option C", "Option D"],
+        correct: 0,
+        timeLimit: 20
+    };
+    questions.push(newQ);
+    selectedQuestion = questions.length - 1;
+    loadQuestionToEditor(selectedQuestion);
+    renderStudioQuestions();
+}
+
+function deleteCurrentQuestion() {
+    if (questions.length <= 1) {
+        alert("You must have at least 1 question in the game!");
+        return;
+    }
+    questions.splice(selectedQuestion, 1);
+    selectedQuestion = Math.max(0, selectedQuestion - 1);
+    loadQuestionToEditor(selectedQuestion);
     renderStudioQuestions();
 }
 
 function backToStudio() {
+    stopHostTimer();
     hideAllHostViews();
     document.getElementById("studio-view").classList.remove("hidden");
+    renderStudioQuestions();
 }
 
 /* =========================================================
-   HOST: LOBBY & QR GENERATION
+   HOST: LOBBY & QR CODE SETUP
    ========================================================= */
 function openLobby() {
     saveCurrentQuestion();
     gameSessionId = "dinner_" + Math.random().toString(36).substr(2, 6).toUpperCase();
     currentGamePin = Math.floor(1000 + Math.random() * 9000).toString();
     players = {};
-
+    
     hideAllHostViews();
     document.getElementById("lobby-view").classList.remove("hidden");
     document.getElementById("game-pin").textContent = currentGamePin;
-
     renderPlayers();
 
-    // Subscribe host to this game's events
     if (mqttClient) {
         mqttClient.subscribe(`kahoot_dinner/${gameSessionId}/+`);
     }
 
-    // Build the QR Code pointing to this exact URL with player params
-    const baseUrl = window.location.origin + window.location.pathname;
-    const playerJoinUrl = `${baseUrl}?role=player&game=${gameSessionId}&pin=${currentGamePin}`;
-
+    let baseUrl = window.location.href.split('?')[0].split('#')[0];
+    const playerJoinUrl = `${baseUrl}?game=${gameSessionId}&pin=${currentGamePin}`;
     document.getElementById("join-url").textContent = playerJoinUrl;
 
-    const qrContainer = document.getElementById("qr-code");
-    qrContainer.innerHTML = "";
-    new QRCode(qrContainer, {
-        text: playerJoinUrl,
-        width: 250,
-        height: 250,
-        colorDark: "#000000",
-        colorLight: "#ffffff",
-        correctLevel: QRCode.CorrectLevel.M
-    });
+    const qrImage = document.getElementById("qr-image");
+    qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(playerJoinUrl)}`;
 }
 
 function renderPlayers() {
@@ -825,7 +1371,6 @@ function renderPlayers() {
     grid.innerHTML = "";
     const playerList = Object.values(players);
     document.getElementById("player-count").textContent = playerList.length;
-
     playerList.forEach(p => {
         const badge = document.createElement("div");
         badge.className = "player-badge";
@@ -841,7 +1386,6 @@ function startGame() {
     hideAllHostViews();
     document.getElementById("game-view").classList.remove("hidden");
     currentQuestion = 0;
-    sendNetworkMessage("game_start", { questionIndex: currentQuestion });
     showQuestion();
 }
 
@@ -849,19 +1393,155 @@ function startGame() {
    HOST: LIVE GAME CONTROLLER
    ========================================================= */
 function showQuestion() {
+    stopHostTimer();
     const q = questions[currentQuestion];
+    questionTimeLimit = q.timeLimit || 20;
+    hostTimeLeft = questionTimeLimit;
+    isQuestionActive = true;
+    
+    document.getElementById('live-leaderboard').classList.remove('visible');
+
+    for (let i = 0; i < 4; i++) {
+        const box = document.getElementById("box-ans-" + i);
+        box.classList.remove("revealed-correct", "faded");
+    }
+
     document.getElementById("game-progress").textContent = `Question ${currentQuestion + 1} / ${questions.length}`;
     document.getElementById("game-question").textContent = q.question;
-
     for (let i = 0; i < 4; i++) {
         document.getElementById("game-answer-" + i).textContent = q.answers[i];
     }
 
-    // Reset player answers for this question
     Object.keys(players).forEach(id => players[id].answered = -1);
     updateAnswerStats();
 
-    sendNetworkMessage("new_question", { questionIndex: currentQuestion });
+    updateTimerDisplay(hostTimeLeft);
+    hostTimerInterval = setInterval(() => {
+        hostTimeLeft--;
+        updateTimerDisplay(hostTimeLeft);
+        if (hostTimeLeft <= 0) {
+            handleTimeUp();
+        }
+    }, 1000);
+
+    sendNetworkMessage("new_question", { 
+        questionIndex: currentQuestion,
+        questionText: q.question,
+        answers: q.answers,
+        timeLimit: questionTimeLimit 
+    });
+}
+
+function updateTimerDisplay(seconds) {
+    const timerEl = document.getElementById("game-timer");
+    timerEl.textContent = Math.max(0, seconds) + "s";
+    if (seconds <= 5) {
+        timerEl.classList.add("urgent");
+    } else {
+        timerEl.classList.remove("urgent");
+    }
+}
+
+function handleTimeUp() {
+    stopHostTimer();
+    isQuestionActive = false;
+    updateTimerDisplay(0);
+    sendNetworkMessage("time_up", {});
+
+    const correctIdx = questions[currentQuestion].correct;
+    for (let i = 0; i < 4; i++) {
+        const box = document.getElementById("box-ans-" + i);
+        if (i === correctIdx) {
+            box.classList.add("revealed-correct");
+        } else {
+            box.classList.add("faded");
+        }
+    }
+    
+    setTimeout(showLiveLeaderboard, 1500);
+}
+
+function showLiveLeaderboard() {
+    const board = document.getElementById('live-leaderboard');
+    const rows = document.getElementById('live-board-rows');
+    rows.innerHTML = '';
+    const top5 = Object.values(players).sort((a,b) => b.score - a.score).slice(0, 5);
+    top5.forEach(p => {
+        const row = document.createElement('div');
+        row.className = 'live-score-row';
+        row.innerHTML = `<span class="name">${escapeHtml(p.name)}</span><span class="score">${p.score} pts</span>`;
+        rows.appendChild(row);
+    });
+    board.classList.add('visible');
+}
+
+function stopHostTimer() {
+    if (hostTimerInterval) {
+        clearInterval(hostTimerInterval);
+        hostTimerInterval = null;
+    }
+}
+
+/* =========================================================
+   HOST: WINNER'S PODIUM REVEAL LOGIC
+   ========================================================= */
+function finishGame() {
+    stopHostTimer();
+    hideAllHostViews();
+    document.getElementById("results-view").classList.remove("hidden");
+    sendNetworkMessage("game_over", {});
+
+    const sorted = Object.values(players).sort((a, b) => b.score - a.score);
+
+    const p1 = sorted[0] || { name: "---", score: 0 };
+    const p2 = sorted || { name: "---", score: 0 };
+    const p3 = sorted || { name: "---", score: 0 };
+
+    document.getElementById("p-name-1").textContent = escapeHtml(p1.name);
+    document.getElementById("p-score-1").textContent = p1.score + " pts";
+    
+    document.getElementById("p-name-2").textContent = escapeHtml(p2.name);
+    document.getElementById("p-score-2").textContent = p2.score + " pts";
+
+    document.getElementById("p-name-3").textContent = escapeHtml(p3.name);
+    document.getElementById("p-score-3").textContent = p3.score + " pts";
+
+    const runnersUpList = document.getElementById("results-list");
+    runnersUpList.innerHTML = "";
+    if (sorted.length > 3) {
+        const runnersUp = sorted.slice(3);
+        runnersUp.forEach((p, idx) => {
+            const row = document.createElement("div");
+            row.className = "result-row";
+            row.innerHTML = `
+                <div class="rank">#${idx + 4}</div>
+                <div style="flex:1; text-align:left; font-weight:800; font-size:18px;">${escapeHtml(p.name)}</div>
+                <div style="font-size:22px; font-weight:900; color:#46178f;">${p.score} pts</div>
+            `;
+            runnersUpList.appendChild(row);
+        });
+    } else {
+        runnersUpList.innerHTML = "<p style='color:#666;'>No other competitors recorded.</p>";
+    }
+
+    const col1 = document.getElementById("p-col-1");
+    const col2 = document.getElementById("p-col-2");
+    const col3 = document.getElementById("p-col-3");
+    
+    col1.classList.remove("reveal-active");
+    col2.classList.remove("reveal-active");
+    col3.classList.remove("reveal-active");
+
+    setTimeout(() => { col3.classList.add("reveal-active"); }, 400);
+    setTimeout(() => { col2.classList.add("reveal-active"); }, 1400);
+    setTimeout(() => { col1.classList.add("reveal-active"); }, 2800);
+}
+
+function hideAllHostViews() {
+    document.getElementById("studio-view").classList.add("hidden");
+    document.getElementById("lobby-view").classList.add("hidden");
+    document.getElementById("game-view").classList.add("hidden");
+    document.getElementById("results-view").classList.add("hidden");
 }
 
 function updateAnswerStats() {
@@ -871,6 +1551,7 @@ function updateAnswerStats() {
 }
 
 function nextQuestion() {
+    stopHostTimer();
     if (currentQuestion < questions.length - 1) {
         currentQuestion++;
         showQuestion();
@@ -879,32 +1560,33 @@ function nextQuestion() {
     }
 }
 
-function finishGame() {
-    hideAllHostViews();
-    document.getElementById("results-view").classList.remove("hidden");
-    sendNetworkMessage("game_over", {});
+function exportResultsToCSV() {
+    if (Object.keys(players).length === 0) {
+        alert("No results to export!");
+        return;
+    }
 
-    const sorted = Object.values(players).sort((a, b) => b.score - a.score);
-    const list = document.getElementById("results-list");
-    list.innerHTML = "";
+    const sortedPlayers = Object.values(players).sort((a, b) => b.score - a.score);
 
-    sorted.forEach((p, idx) => {
-        const row = document.createElement("div");
-        row.className = "result-row";
-        row.innerHTML = `
-            <div class="rank">#${idx + 1}</div>
-            <div style="flex:1; text-align:left; font-weight:800; font-size:18px;">${escapeHtml(p.name)}</div>
-            <div style="font-size:22px; font-weight:900; color:#46178f;">${p.score} pts</div>
-        `;
-        list.appendChild(row);
+    let csvContent = "Rank,WWID,Score\r\n";
+
+    sortedPlayers.forEach((player, index) => {
+        const rank = index + 1;
+        const wwid = `"${player.name.replace(/"/g, '""')}"`;
+        const score = player.score;
+        csvContent += `${rank},${wwid},${score}\r\n`;
     });
-}
 
-function hideAllHostViews() {
-    document.getElementById("studio-view").classList.add("hidden");
-    document.getElementById("lobby-view").classList.add("hidden");
-    document.getElementById("game-view").classList.add("hidden");
-    document.getElementById("results-view").classList.add("hidden");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const timestamp = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+    link.setAttribute("download", `annual_dinner_quiz_results_${timestamp}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 /* =========================================================
@@ -915,31 +1597,94 @@ function initPlayerMode() {
     document.getElementById("host-app").classList.add("hidden");
     document.getElementById("player-view").classList.remove("hidden");
 
-    const params = new URLSearchParams(window.location.search);
-    gameSessionId = params.get("game") || "";
-    currentGamePin = params.get("pin") || "----";
+    const nameInput = document.getElementById("mobile-player-name");
+    nameInput.value = "";
+
+    const urlParams = new URLSearchParams(window.location.search);
+    gameSessionId = urlParams.get("game") || "";
+    currentGamePin = urlParams.get("pin") || "----";
+
+    if (!gameSessionId) {
+        const fullUrl = window.location.href;
+        const matchGame = fullUrl.match(/[?&]game=([^&]+)/);
+        const matchPin = fullUrl.match(/[?&]pin=([^&]+)/);
+        if (matchGame) gameSessionId = decodeURIComponent(matchGame);
+        if (matchPin) currentGamePin = decodeURIComponent(matchPin);
+    }
 
     document.getElementById("phone-display-pin").textContent = currentGamePin;
 
     initRealtimeNetwork(() => {
-        mqttClient.subscribe(`kahoot_dinner/${gameSessionId}/+`);
+        if (gameSessionId) {
+            mqttClient.subscribe(`kahoot_dinner/${gameSessionId}/+`, (err) => {
+                if (!err) console.log("Subscribed to game topic successfully");
+            });
+        }
     });
 }
 
 function playerSubmitJoin() {
     const nameInput = document.getElementById("mobile-player-name").value.trim();
     if (!nameInput) {
-        alert("Please enter your name or table number!");
+        alert("Please enter your WWID!");
         return;
     }
+
+    if (isNaN(nameInput)) {
+        alert("WWID must be numeric only!");
+        return;
+    }
+
+    if (!mqttClient || !isConnected) {
+        alert("Still connecting to network... please wait 2 seconds and tap Join again.");
+        return;
+    }
+
     myPlayerName = nameInput;
+    const btn = document.getElementById("btn-join-submit");
+    btn.disabled = true;
+    btn.textContent = "Joining...";
+
     sendNetworkMessage("join_request", {
         playerId: myPlayerId,
         name: myPlayerName
     });
+
+    setTimeout(() => {
+        if (!document.getElementById("mobile-join-box").classList.contains("hidden")) {
+            btn.disabled = false;
+            btn.textContent = "JOIN GAME";
+        }
+    }, 4000);
+}
+
+function startPlayerTimer(duration) {
+    stopPlayerTimer();
+    playerTimeLeft = duration;
+    const badge = document.getElementById("player-timer-badge");
+    badge.textContent = playerTimeLeft + "s";
+
+    playerTimerInterval = setInterval(() => {
+        playerTimeLeft--;
+        if (playerTimeLeft >= 0) {
+            badge.textContent = playerTimeLeft + "s";
+        }
+        if (playerTimeLeft <= 0) {
+            stopPlayerTimer();
+            enablePhoneButtons(false);
+        }
+    }, 1000);
+}
+
+function stopPlayerTimer() {
+    if (playerTimerInterval) {
+        clearInterval(playerTimerInterval);
+        playerTimerInterval = null;
+    }
 }
 
 function playerPickAnswer(idx) {
+    stopPlayerTimer();
     enablePhoneButtons(false);
     sendNetworkMessage("submit_answer", {
         playerId: myPlayerId,
@@ -949,7 +1694,7 @@ function playerPickAnswer(idx) {
 }
 
 function showPlayerSection(id) {
-    ["mobile-join-box", "mobile-waiting-box", "mobile-playing-box", "mobile-answered-box"].forEach(box => {
+    ["mobile-join-box", "mobile-waiting-box", "mobile-playing-box", "mobile-answered-box", "mobile-timeup-box"].forEach(box => {
         document.getElementById(box).classList.add("hidden");
     });
     document.getElementById(id).classList.remove("hidden");
@@ -966,18 +1711,22 @@ function escapeHtml(str) {
 }
 
 /* =========================================================
-   INITIALIZATION
+   INITIALIZATION & ROLE ROUTING
    ========================================================= */
 window.addEventListener("load", () => {
     loadDefaultQuestions();
-
+    
     const params = new URLSearchParams(window.location.search);
-    if (params.get("role") === "player") {
-        initPlayerMode();
-    } else {
+    const isAdmin = params.get("admin") === 'true';
+
+    if (isAdmin) {
+        isHost = true;
         renderStudioQuestions();
         loadQuestionToEditor(0);
         initRealtimeNetwork();
+    } else {
+        isHost = false;
+        initPlayerMode();
     }
 });
 </script>
